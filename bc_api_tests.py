@@ -1,31 +1,52 @@
 """API tests"""
 import unittest
 import datetime
+import json
 import requests
 
 BASE_URL = 'https://reqres.in'
 BASE_TIMEOUT = 5
 USER_ID = 5
 USER_ID_BAD = 23
+nel_dic = {"success_fraction": 0, "report_to": "cf-nel", "max_age": 604800}
 user_json = {'name': 'Ivan', 'job': 'leader'}
-user_json_login = {"email": "eve.holt@reqres.in", "password": "pistol"}
-resp_json = {"id": 4, "token": "QpwL5tke4Pnpja7X4"}
-login_not_valid = [{"email": "", "password": ""}, {"email": "eve.holt@reqres.in", "password": ""},
-                   {"email": "1", "password": "1"}, {"email": "", "password": "1"}]
+user_new_json = {"email": "eve.holt@reqres.in", "password": "pistol"}
+user_new_resp_json = {"id": 4, "token": "QpwL5tke4Pnpja7X4"}
+INVALID_REGISTRATION = [
+    {
+        'body': {"email": "", "password": ""},
+        'error': 'Missing email or username'
+    },
+    {
+        'body': {"email": "eve.holt@reqres.in", "password": ""},
+        'error': 'Missing password'
+    },
+    {
+        'body': {"email": "1", "password": "1"},
+        'error': 'Note: Only defined users succeed registration'
+    },
+    {
+        'body': {"email": "", "password": "pistol"},
+        'error': 'Missing email or username'
+    }
+]
 
 
 class TestsAPI(unittest.TestCase):
     """API test suit"""
+
     def test_get_users_list(self) -> None:
         """Test of GET:/api/users-LIST USERS"""
         response = requests.get(f'{BASE_URL}/api/users', timeout=BASE_TIMEOUT)
-
+        lists_value = response.json()['total'] / response.json()['per_page']
+        print(len(response.json()['data']))
         self.assertEqual(200, response.status_code)
         self.assertEqual('application/json; charset=utf-8', response.headers['Content-Type'])
-        self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                         response.headers['NEL'])
-        self.assertNotEqual(0, response.json()['total'])
-        self.assertEqual(1, response.json()['data'][0]['id'])
+        self.assertDictEqual(nel_dic, json.loads(response.headers['NEL']))
+        self.assertGreater(response.json()['total'], 0)
+        self.assertEqual(lists_value, response.json()['total_pages'])
+        self.assertEqual(response.json()['per_page'], len(response.json()['data']))
+        self.assertGreater(response.json()['data'][0]['id'], 0)
         self.assertRegex(response.json()['data'][0]['email'],
                          r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
 
@@ -34,10 +55,8 @@ class TestsAPI(unittest.TestCase):
         response = requests.get(f'{BASE_URL}/api/users/{USER_ID}', timeout=BASE_TIMEOUT)
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual('application/json; charset=utf-8',
-                         response.headers['Content-Type'])
-        self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                         response.headers['NEL'])
+        self.assertEqual('application/json; charset=utf-8', response.headers['Content-Type'])
+        self.assertDictEqual(nel_dic, json.loads(response.headers['NEL']))
         self.assertEqual(USER_ID, response.json()['data']['id'])
         self.assertRegex(response.json()['data']['email'],
                          r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
@@ -45,7 +64,14 @@ class TestsAPI(unittest.TestCase):
 
     def test_get_user_not_found(self) -> None:
         """Test of GET:/api/users/23-SINGLE USER NOT FOUND"""
-        response = requests.get(f'{BASE_URL}/api/users/{USER_ID_BAD}', timeout=BASE_TIMEOUT)
+        user_id_404 = 0
+        while True:
+            resp = requests.get(f'{BASE_URL}/api/users/{USER_ID_BAD}', timeout=BASE_TIMEOUT)
+            if resp.status_code == 404:
+                break
+            user_id_404 += USER_ID_BAD + 100
+
+        response = requests.get(f'{BASE_URL}/api/users/{user_id_404}', timeout=BASE_TIMEOUT)
 
         self.assertEqual(404, response.status_code)
         self.assertEqual('2', response.headers['Content-Length'])
@@ -56,10 +82,8 @@ class TestsAPI(unittest.TestCase):
         response = requests.post(f'{BASE_URL}/api/users', json=user_json, timeout=BASE_TIMEOUT)
 
         self.assertEqual(201, response.status_code)
-        self.assertEqual('application/json; charset=utf-8',
-                         response.headers['Content-Type'])
-        self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                         response.headers['NEL'])
+        self.assertEqual('application/json; charset=utf-8', response.headers['Content-Type'])
+        self.assertDictEqual(nel_dic, json.loads(response.headers['NEL']))
         self.assertEqual(user_json['name'], response.json()['name'])
         self.assertEqual(user_json['job'], response.json()['job'])
         self.assertNotEqual('', response.json()['id'])
@@ -67,66 +91,68 @@ class TestsAPI(unittest.TestCase):
 
     def test_put_user_update(self) -> None:
         """Test of PUT:/api/users/2-UPDATE"""
-        response = requests.put(f'{BASE_URL}/api/users/{USER_ID}', json=user_json,
-                                timeout=BASE_TIMEOUT)
+        user_id_new = self.get_new_user()
+        response_org = requests.get(f'{BASE_URL}/api/users/{user_id_new}',
+                                    timeout=BASE_TIMEOUT)
 
-        self.assertEqual('application/json; charset=utf-8',
-                         response.headers['Content-Type'])
-        self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                         response.headers['NEL'])
-        self.assertEqual(200, response.status_code)
-        self.assertEqual(user_json['name'], response.json()['name'])
-        self.assertEqual(user_json['job'], response.json()['job'])
-        self.assertEqual(str(datetime.date.today()), response.json()['updatedAt'][0:10])
+        response_mod = requests.put(f'{BASE_URL}/api/users/{user_id_new}', json=user_json,
+                                    timeout=BASE_TIMEOUT)
+
+        self.assertEqual('application/json; charset=utf-8', response_mod.headers['Content-Type'])
+        self.assertDictEqual(nel_dic, json.loads(response_mod.headers['NEL']))
+        self.assertEqual(200, response_mod.status_code)
+        self.assertEqual(user_json['name'], response_mod.json()['name'])
+        self.assertEqual(user_json['job'], response_mod.json()['job'])
+        self.assertEqual(str(datetime.date.today()), response_mod.json()['updatedAt'][0:10])
+        self.assertNotEqual(response_org.json()['name'], response_mod.json()['name'])
+        self.assertNotEqual(response_org.json()['job'], response_mod.json()['job'])
 
     def test_delete_user(self) -> None:
         """Test of DELETE:/api/users/2-DELETE"""
-        response = requests.delete(f'{BASE_URL}/api/users/{USER_ID}', timeout=BASE_TIMEOUT)
+        user_id_new = self.get_new_user()
+        response = requests.delete(f'{BASE_URL}/api/users/{user_id_new}', timeout=BASE_TIMEOUT)
+        response_post_del = requests.get(f'{BASE_URL}/api/users/{user_id_new}',
+                                         timeout=BASE_TIMEOUT)
 
         self.assertEqual(204, response.status_code)
-        self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                         response.headers['NEL'])
+        self.assertDictEqual(nel_dic, json.loads(response.headers['NEL']))
         self.assertEqual('', response.text)
+        self.assertEqual(404, response_post_del.status_code)
 
-    def test_post_user_signin(self) -> None:
+    def test_post_user_signup(self) -> None:
         """Test of POST:/api/register-REGISTER-SUCCESSFUL"""
-        response = requests.post(f'{BASE_URL}/api/register/', json=user_json_login,
+        response = requests.post(f'{BASE_URL}/api/register/', json=user_new_json,
                                  timeout=BASE_TIMEOUT)
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                         response.headers['NEL'])
-        self.assertEqual(resp_json, response.json())
+        self.assertDictEqual(nel_dic, json.loads(response.headers['NEL']))
+        self.assertDictEqual(user_new_resp_json, response.json())
 
-    def test_post_user_signin_negative(self) -> None:
+    def test_post_user_signup_negative(self) -> None:
         """Test of POST:/api/register-REGISTER-UNSUCCESSFUL"""
-        for json_set in login_not_valid:
-            if json_set['email'] == '':
-                resp_json_in = {"error": "Missing email or username"}
-            elif json_set['email'] != '' and json_set['password'] == '':
-                resp_json_in = {"error": "Missing password"}
-            elif json_set['email'] != 'eve.holt@reqres.in' and json_set['password'] != '':
-                resp_json_in = {"error": "Note: Only defined users succeed registration"}
-            else:
-                resp_json_in = {}
-
-            response = requests.post(f'{BASE_URL}/api/register/', json=json_set,
+        for registration in INVALID_REGISTRATION:
+            response = requests.post(f'{BASE_URL}/api/register/', json=registration['body'],
                                      timeout=BASE_TIMEOUT)
 
             self.assertEqual(400, response.status_code)
-            self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                             response.headers['NEL'])
-            self.assertEqual(resp_json_in, response.json())
+            self.assertDictEqual(nel_dic, json.loads(response.headers['NEL']))
+            self.assertEqual(registration['error'], response.json()['error'])
 
-    def test_get_users_list_perfomance(self) -> None:
+    def test_get_users_list_performance(self) -> None:
         """Test of GET:/api/users?delay=3-DELAYED RESPONSE(less than 3 seconds)"""
         response = requests.get(f'{BASE_URL}/api/users?delay=3', timeout=BASE_TIMEOUT)
 
         self.assertEqual(200, response.status_code)
         self.assertEqual('application/json; charset=utf-8', response.headers['Content-Type'])
-        self.assertEqual('{"success_fraction":0,"report_to":"cf-nel","max_age":604800}',
-                         response.headers['NEL'])
+        self.assertDictEqual(nel_dic, json.loads(response.headers['NEL']))
         self.assertGreater(3, response.elapsed.seconds, 'Response time is more than 3 sec.')
+
+    @staticmethod
+    def get_new_user() -> int:
+        """New user creation method"""
+        resp_user_crt = requests.post(f'{BASE_URL}/api/users', json=user_json,
+                                      timeout=BASE_TIMEOUT)
+        return resp_user_crt.json()['id']
 
 
 if __name__ == '__main__':
